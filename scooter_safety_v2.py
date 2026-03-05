@@ -1,0 +1,107 @@
+#!/usr/bin/env python
+import rospy
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Twist
+from collections import deque
+import math
+
+# --- PARAMETERS ---
+SAFE_SPEED = 0.15
+STEER_SPEED = 0.5
+STOP_DIST = 0.55
+AVOID_DIST = 1.10
+MIN_VALID = 0.48
+FRONT_DIR = math.pi
+WINDOW = math.radians(45)
+
+class ScooterSafetyV2:
+    def __init__(self):
+        self.pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
+        
+        # 1. Temporal Filtering (Claude's "Leg Filter")
+        # Stores the last 5 results; 1 = blocked, 0 = clear
+        self.history = deque(maxlen=5)
+        
+        # 2. Hysteresis (Claude's "Anti-Wobble")
+        self.last_steer_dir = 0 # 1 for Left, -1 for Right
+        self.stuck_start_time = None
+        
+        rospy.loginfo("--- V2.0 SAFETY GOVERNOR ONLINE ---")
+
+    def scan_callback(self, msg):
+        left_hits = 0
+        right_hits = 0
+        min_dist = float('inf')
+        
+        for i, distance in enumerate(msg.ranges):
+            angle_rad = msg.angle_min + i * msg.angle_increment
+            rel_angle = angle_rad - FRONT_DIR
+            
+            # Angle Normalization
+            if rel_angle > math.pi: rel_angle -= 2*math.pi
+            if rel_angle < -math.pi: rel_angle += 2*math.pi
+
+            if abs(rel_angle) < WINDOW:
+                if MIN_VALID < distance < AVOID_DIST:
+                    if rel_angle > 0: left_hits += 1 # Swapped logic per testing
+                    else: right_hits += 1
+                    if distance < min_dist: min_dist = distance
+
+        total_hits = left_hits + right_hits
+        # Voting system: Is this a real object or just noise?
+        is_blocked = 1 if (total_hits > 5) else 0
+        self.history.append(is_blocked)
+        
+        # We only act if the majority of recent scans agree there's a block
+        if sum(self.history) >= 3:
+            self.process_obstacle(min_dist, left_hits, right_hits)
+        else:
+            self.process_clear()
+
+    def process_obstacle(self, dist, left, right):
+        move_cmd = Twist()
+        
+        # EMERGENCY STOP
+        if dist <= STOP_DIST:
+            if self.stuck_start_time is None:
+                self.stuck_start_time = rospy.get_time()
+            
+            # RECOVERY MANEUVER (If blocked > 2.5s)
+            if rospy.get_time() - self.stuck_start_time > 2.5:
+                rospy.logwarn("STATE: RECOVERY (BACKING UP)")
+                move_cmd.linear.x = -0.1
+                move_cmd.angular.z = 0.5
+            else:
+                rospy.logerr("STATE: CRITICAL STOP")
+                move_cmd.linear.x = 0.0
+        
+        # AVOIDANCE STEERING
+        else:
+            self.stuck_start_time = None
+            move_cmd.linear.x = 0.08
+            
+            # Logic for Steering Hysteresis
+            # If left hits > right, steer Right (-Z). Else steer Left (+Z).
+            new_dir = -1 if left > right else 1
+            
+            # Smooth direction transitions
+            move_cmd.angular.z = new_dir * STEER_SPEED
+            self.last_steer_dir = new_dir
+            rospy.loginfo("STATE: AVOIDING (L:%d R:%d)", left, right)
+
+        self.pub.publish(move_cmd)
+
+    def process_clear(self):
+        self.stuck_start_time = None
+        self.last_steer_dir = 0
+        move_cmd = Twist()
+        move_cmd.linear.x = SAFE_SPEED
+        move_cmd.angular.z = 0.0
+        self.pub.publish(move_cmd)
+        rospy.loginfo("STATE: PATH CLEAR")
+
+if __name__ == '__main__':
+    rospy.init_node('scooter_safety_v2')
+    ScooterSafetyV2()
+    rospy.spin()
