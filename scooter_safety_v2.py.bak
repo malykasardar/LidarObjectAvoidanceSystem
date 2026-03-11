@@ -8,8 +8,8 @@ import math
 # --- PARAMETERS ---
 SAFE_SPEED = 0.15
 STEER_SPEED = 0.5
-STOP_DIST = 2.0
-AVOID_DIST = 3.0
+STOP_DIST = 0.55
+AVOID_DIST = 1.10
 MIN_VALID = 0.48
 FRONT_DIR = math.pi
 WINDOW = math.radians(45)
@@ -21,7 +21,7 @@ class ScooterSafetyV2:
         
         # 1. Temporal Filtering (Claude's "Leg Filter")
         # Stores the last 5 results; 1 = blocked, 0 = clear
-        self.history = deque(maxlen=3)
+        self.history = deque(maxlen=5)
         
         # 2. Hysteresis (Claude's "Anti-Wobble")
         self.last_steer_dir = 0 # 1 for Left, -1 for Right
@@ -54,7 +54,7 @@ class ScooterSafetyV2:
         self.history.append(is_blocked)
         
         # We only act if the majority of recent scans agree there's a block
-        if sum(self.history) >= 2:
+        if sum(self.history) >= 3:
             self.process_obstacle(min_dist, left_hits, right_hits)
         else:
             self.process_clear()
@@ -75,8 +75,6 @@ class ScooterSafetyV2:
             else:
                 rospy.logerr("STATE: CRITICAL STOP")
                 move_cmd.linear.x = 0.0
-                open("/tmp/lidar_stop","w").write("1")
-                open("/tmp/lidar_steer","w").write("0.0")
         
         # AVOIDANCE STEERING
         else:
@@ -85,18 +83,12 @@ class ScooterSafetyV2:
             
             # Logic for Steering Hysteresis
             # If left hits > right, steer Right (-Z). Else steer Left (+Z).
-            # Only change direction if one side is clearly dominant (>3 hit difference)
-            if abs(left - right) > 3:
-                new_dir = -1 if left > right else 1
-            else:
-                new_dir = self.last_steer_dir if self.last_steer_dir != 0 else (-1 if left > right else 1)
+            new_dir = -1 if left > right else 1
             
             # Smooth direction transitions
             move_cmd.angular.z = new_dir * STEER_SPEED
             self.last_steer_dir = new_dir
             rospy.loginfo("STATE: AVOIDING (L:%d R:%d)", left, right)
-            open("/tmp/lidar_stop","w").write("0")
-            open("/tmp/lidar_steer","w").write(str(round(move_cmd.angular.z * 1.5, 3)))
 
         self.pub.publish(move_cmd)
 
@@ -108,8 +100,6 @@ class ScooterSafetyV2:
         move_cmd.angular.z = 0.0
         self.pub.publish(move_cmd)
         rospy.loginfo("STATE: PATH CLEAR")
-        open("/tmp/lidar_stop","w").write("0")
-        open("/tmp/lidar_steer","w").write("0.0")
 
 if __name__ == '__main__':
     rospy.init_node('scooter_safety_v2')
