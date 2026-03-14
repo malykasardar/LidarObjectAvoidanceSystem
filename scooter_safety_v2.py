@@ -19,11 +19,11 @@ class ScooterSafetyV2:
         self.pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.sub = rospy.Subscriber("/scan", LaserScan, self.scan_callback)
         
-        # 1. Temporal Filtering (Claude's "Leg Filter")
+        # 1. Temporal Filtering 
         # Stores the last 5 results; 1 = blocked, 0 = clear
         self.history = deque(maxlen=3)
         
-        # 2. Hysteresis (Claude's "Anti-Wobble")
+        # 2. Hysteresis 
         self.last_steer_dir = 0 # 1 for Left, -1 for Right
         self.stuck_start_time = None
         
