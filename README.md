@@ -1,7 +1,7 @@
 # MetroMove: Autonomous E-Scooter
 
 > Ontario Tech University | ELEE 4940U Capstone Design Project | Winter 2026  
-> **Team:** Abdullah Hanoosh, Malyka Sardar, Tobi Awe, Hamza Mumtaz  
+> **Team:** Malyka Sardar, Abdullah Hanoosh, Hamza Mumtaz, Tobi Awe  
 > **Faculty Advisor:** Dr. Mohamed Eldarieby
 
 ---
